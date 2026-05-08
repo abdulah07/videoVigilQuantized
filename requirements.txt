@@ -1,0 +1,15 @@
+# ─── Core ────────────────────────────────────────────────────────────────────
+ultralytics>=8.3.0          # YOLO + ByteTrack/BoTSORT + OpenVINO export helper
+openvino>=2024.1.0          # OpenVINO runtime for INT8 / FP32 .xml models
+opencv-python>=4.9.0        # Frame I/O and annotation
+numpy>=1.24.0
+Pillow>=10.0.0              # Tkinter image bridge (ImageTk)
+pyyaml>=6.0                 # Config loading
+
+# ─── Re-ID (optional but recommended) ────────────────────────────────────────
+# torchreid                 # Uncomment for OSNet-based Re-ID features
+#   → install guide: https://kaiyangzhou.github.io/deep-person-reid/
+
+# ─── Torch (needed by ultralytics / torchreid) ───────────────────────────────
+torch>=2.1.0
+torchvision>=0.16.0

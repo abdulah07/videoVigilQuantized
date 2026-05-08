@@ -1,0 +1,75 @@
+# ─────────────────────────────────────────────
+#  YOLO Detection + Tracking + Re-ID Config
+# ─────────────────────────────────────────────
+
+# ── Model Paths ──────────────────────────────
+models:
+  yolo11n_fp32:       models/fp32/yolo11n_fp32.pt
+  yolo11s_fp32:       models/fp32/yolo11s_fp32.pt
+  yolo11n_fp16:       models/fp16/yolo11n_fp16.pt
+  yolo11s_fp16:       models/fp16/yolo11s_fp16.pt
+  yolo11n_openvino_fp32: models/fp32/yolo11n_fp32_openvino_model   # folder with .xml + .bin + metadata.yaml
+  yolo11s_openvino_fp32: models/fp32/yolo11s_fp32_openvino_model   # folder with .xml + .bin + metadata.yaml
+  yolo11n_int8:       models/openvino/yolo11n_int8_openvino_model   # folder with .xml + .bin + metadata.yaml
+  yolo11s_int8:       models/openvino/yolo11s_int8_openvino_model   # folder with .xml + .bin + metadata.yaml
+
+# ── Detection Parameters ──────────────────────
+detection:
+  conf_threshold: 0.35         # Minimum confidence score (0.0–1.0)
+  iou_threshold: 0.45          # NMS IoU threshold (0.0–1.0)
+  target_classes: [0]          # COCO class IDs to detect; 0 = person, [] = all classes
+  max_detections: 300          # Hard cap on detections per frame
+  imgsz: 640                   # Inference image size (pixels); 320/480/640/1280
+
+# ── Tracking Parameters (ByteTrack) ──────────
+tracking:
+  tracker: bytetrack           # Tracker backend: bytetrack | botsort
+  track_high_thresh: 0.5       # High-confidence detection threshold for new tracks
+  track_low_thresh: 0.1        # Low-confidence threshold (second association)
+  new_track_thresh: 0.6        # Min score to initialise a brand-new track
+  track_buffer: 30             # Frames to keep a lost track alive
+  match_thresh: 0.8            # IoU threshold for track–detection matching
+  min_hits: 3                  # Minimum detections before a track is confirmed
+
+# ── Re-Identification Parameters ─────────────
+reid:
+  enabled: true
+  model: osnet_x0_25           # ReID backbone: osnet_x0_25 | osnet_x1_0 | resnet50
+  weights: auto                # Path to .pt weights or "auto" to download
+  device: cpu                  # Device: cpu | cuda | AUTO (OpenVINO)
+  reid_thresh: 0.4             # Cosine-similarity threshold; lower = stricter match
+  max_reid_distance: 0.6       # Max feature distance to associate a lost track
+  feature_update_rate: 0.9     # EMA rate for feature embedding update (0–1)
+
+# ── OpenVINO / Hardware ───────────────────────
+openvino:
+  device: CPU                  # Inference device: CPU | GPU | AUTO | MULTI:CPU,GPU
+  num_streams: 2               # Parallel inference streams (CPU only)
+  num_threads: 0               # CPU threads; 0 = auto-detect
+  enable_profiling: false      # Collect per-layer profiling (slows inference)
+
+# ── Video / Stream ────────────────────────────
+video:
+  source: 0                    # 0 = webcam, or path/URL to video file
+  width:  1280                 # Output display width (px)
+  height: 720                  # Output display height (px)
+  target_fps: 30               # Cap playback FPS; 0 = uncapped
+
+# ── Visualisation ─────────────────────────────
+visualisation:
+  show_labels: true            # Draw class label on each box
+  show_confidence: true        # Append confidence score to label
+  show_track_id: true          # Show unique track ID
+  show_reid_id: true           # Show Re-ID gallery index
+  show_fps: true               # Overlay live FPS counter
+  show_trail: true             # Draw motion trail for each track
+  trail_length: 40             # Number of historical centroid points
+  box_thickness: 2             # Bounding-box line width (px)
+  font_scale: 0.55             # OpenCV font scale for labels
+  palette: tab20               # Colour palette for track IDs
+
+# ── Output / Logging ─────────────────────────
+output:
+  save_video: false            # Write annotated video to disk
+  output_dir: output/          # Directory for saved videos / logs
+  log_level: INFO              # Python logging level: DEBUG | INFO | WARNING | ERROR
