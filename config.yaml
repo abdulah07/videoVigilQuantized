@@ -21,9 +21,9 @@ detection:
   max_detections: 300          # Hard cap on detections per frame
   imgsz: 640                   # Inference image size (pixels); 320/480/640/1280
 
-# ── Tracking Parameters (ByteTrack) ──────────
+# ── Tracking Parameters ──────────────────────
 tracking:
-  tracker: bytetrack           # Tracker backend: bytetrack | botsort
+  tracker: bytetrack           # Tracker backend: bytetrack | botsort | ocsort | strongsort | trackformer
   track_high_thresh: 0.5       # High-confidence detection threshold for new tracks
   track_low_thresh: 0.1        # Low-confidence threshold (second association)
   new_track_thresh: 0.6        # Min score to initialise a brand-new track
@@ -34,11 +34,14 @@ tracking:
 # ── Re-Identification Parameters ─────────────
 reid:
   enabled: true
-  model: osnet_x0_25           # ReID backbone: osnet_x0_25 | osnet_x1_0 | resnet50
+  # Available models: osnet_ain_x1_0, osnet_x1_0, osnet_x0_25, resnet50, resnet101
+  # fastraid, transreid, vitreid (requires torchreid / fast-reid / timm)
+  model: osnet_ain_x1_0
   weights: auto                # Path to .pt weights or "auto" to download
   device: cpu                  # Device: cpu | cuda | AUTO (OpenVINO)
   reid_thresh: 0.4             # Cosine-similarity threshold; lower = stricter match
-  max_reid_distance: 0.6       # Max feature distance to associate a lost track
+  max_reid_distance: 0.25      # Max feature distance to associate a lost track (tightened)
+  frame_interval: 3            # Re-ID feature extraction every N frames; raise for more FPS
   feature_update_rate: 0.9     # EMA rate for feature embedding update (0–1)
 
 # ── OpenVINO / Hardware ───────────────────────

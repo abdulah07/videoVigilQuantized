@@ -1,15 +1,72 @@
-# ─── Core ────────────────────────────────────────────────────────────────────
-ultralytics>=8.3.0          # YOLO + ByteTrack/BoTSORT + OpenVINO export helper
-openvino>=2024.1.0          # OpenVINO runtime for INT8 / FP32 .xml models
-opencv-python>=4.9.0        # Frame I/O and annotation
-numpy>=1.24.0
-Pillow>=10.0.0              # Tkinter image bridge (ImageTk)
-pyyaml>=6.0                 # Config loading
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# YOLO Vision - Complete Dependencies
+# Object Detection + Multi-Object Tracking + Person Re-Identification
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# ─── Re-ID (optional but recommended) ────────────────────────────────────────
-# torchreid                 # Uncomment for OSNet-based Re-ID features
-#   → install guide: https://kaiyangzhou.github.io/deep-person-reid/
+# ─── Core Deep Learning Framework ──────────────────────────────────────────────────────
+# PyTorch and vision utilities - required for all ML operations
+torch>=2.1.0                # Deep learning framework (CPU/GPU support)
+torchvision>=0.16.0         # Computer vision utilities and models
+torchreid>=0.2.5            # Re-ID models: OSNet, ResNet, TransReID
 
-# ─── Torch (needed by ultralytics / torchreid) ───────────────────────────────
-torch>=2.1.0
-torchvision>=0.16.0
+# ─── Object Detection & Tracking ──────────────────────────────────────────────────────
+ultralytics>=8.3.0          # YOLOv11 detection + native trackers (ByteTrack, BoTSORT)
+openvino>=2024.1.0          # Intel's optimized inference runtime (INT8, FP32 quantization)
+
+# ─── Kalman Filtering (for Official Tracker Implementations) ─────────────────────────
+filterpy>=1.4.5             # Kalman filter implementation for OC-SORT, StrongSORT, TrackFormer
+scipy>=1.0                  # Hungarian algorithm (linear_sum_assignment) for optimal track matching
+
+# ─── Machine Learning & Scientific Computing ──────────────────────────────────────────
+numpy>=1.24.0               # Numerical computing arrays
+scikit-learn>=1.0           # ML utilities (distance metrics for tracking)
+timm>=1.0.0                 # Timm models for Vision Transformer support (VitReID, DeiT)
+
+# ─── Image & Video Processing ────────────────────────────────────────────────────────
+opencv-python>=4.9.0        # Frame I/O, annotation, and OpenCV operations
+Pillow>=10.0.0              # Image processing (bridge to Tkinter GUI ImageTk module)
+
+# ─── Configuration Management ──────────────────────────────────────────────────────
+pyyaml>=6.0                 # YAML config file parsing and loading
+
+# ─── GUI Framework ────────────────────────────────────────────────────────────────────
+# Tkinter is included with Python 3.x standard library - no pip install needed
+# On Linux: may require system package 'python3-tk'
+# On macOS: included with Python from python.org
+# On Windows: included automatically
+
+# ─── Optional: Fast Re-ID (Submodule) ─────────────────────────────────────────────────
+# The fast-reid/ submodule is included in the repo and provides:
+# - FastReID models (OSNet-IBN, ResNet models)
+# - Improved feature extraction for person Re-ID
+# Installation: pip install -e fast-reid/ (if not already included as submodule)
+
+# ─── Notes ────────────────────────────────────────────────────────────────────────────
+# 1. TRACKER IMPLEMENTATIONS:
+#    - ByteTrack & BoTSORT: Native to Ultralytics (automatic)
+#    - OC-SORT, StrongSORT, TrackFormer: Official implementations in official_trackers.py
+#      (Uses Kalman filtering + Hungarian algorithm)
+#
+# 2. RE-ID FRAMEWORKS AVAILABLE:
+#    - torchreid: OSNet, ResNet (highly optimized, set model in config.yaml)
+#    - fast-reid (submodule): FastReID variants
+#    - timm: Vision Transformer models for ViT-based Re-ID
+#
+# 3. HARDWARE ACCELERATION:
+#    - GPU: Automatic CUDA detection if torch compiled with CUDA
+#    - CPU-Optimized: OpenVINO INT8 quantized models (3-5x faster than FP32)
+#    - Both are automatically selected based on system_utils.recommend_models()
+#
+# 4. INSTALLATION:
+#    pip install -r requirements.txt
+#    (Add --break-system-packages if using system Python on Linux)
+#
+# 5. SYSTEM DEPENDENCIES (Linux/macOS):
+#    sudo apt-get install python3-tk                    # Ubuntu/Debian
+#    brew install python-tk@3.11 python@3.11           # macOS (if needed)
+#
+# 6. MINIMAL TESTING:
+#    python app.py                          # Run GUI
+#    python -c "from detection_engine import get_available_trackers; print(get_available_trackers())"
+#
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

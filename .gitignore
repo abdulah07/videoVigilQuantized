@@ -1,0 +1,79 @@
+# ─── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ─── Virtual Environments ────────────────────────────────────────────────────
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv
+
+# ─── IDE & Editor ────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# ─── Project Specific ────────────────────────────────────────────────────────
+# Deprecated files
+custom_trackers.py.deprecated
+*.deprecated
+
+# Output and cache directories
+output/
+logs/
+*.log
+cache/
+
+# Model caches and downloads (optional - comment out if tracking models)
+*.pt
+*.pth
+*.xml
+*.bin
+models/*/cache/
+
+# Video files (too large)
+*.mp4
+*.avi
+*.mov
+*.flv
+*.mkv
+
+# Temporary files
+*.tmp
+*.temp
+.temp/
+
+# OS files
+Thumbs.db
+.DS_Store
