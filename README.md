@@ -25,13 +25,16 @@ ByteTrack/BoTSORT tracking and Re-ID via a built-in EMA gallery.
 
 ### 1. Install dependencies
 ```bash
-pip install -r requirements.txt
+pip install --break-system-packages -r requirements.txt
 ```
 
 For OSNet-based Re-ID (better accuracy):
 ```bash
-pip install torchreid
+pip install --break-system-packages torchreid
 ```
+
+On Kali and other PEP 668-managed systems, `--break-system-packages` is
+required when using the global Python installation.
 
 ### 2. Launch the GUI
 ```bash
