@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import sys
 import time
+import threading
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -333,6 +334,9 @@ class DetectionEngine:
         self.font_scale = vis.get("font_scale", 0.55)
         self.show_fps = vis.get("show_fps", True)
 
+        # Guard model/tracker state during concurrent UI + worker operations.
+        self._engine_lock = threading.RLock()
+
         # Tracking
         track_cfg = cfg.get("tracking", {})
         self._tracker_name = track_cfg.get("tracker", "bytetrack")
@@ -364,57 +368,59 @@ class DetectionEngine:
 
     def set_reid_model(self, model_name: str):
         """Switch Re-ID model with error handling."""
-        if self._reid_enabled and model_name == self._reid_model_name and self._reid_extractor is not None:
-            return
+        with self._engine_lock:
+            if self._reid_enabled and model_name == self._reid_model_name and self._reid_extractor is not None:
+                return
 
-        self._reid_cfg["model"] = model_name
-        self._reid_model_name = model_name
-        if not self._reid_enabled:
-            return
-        
-        try:
-            if model_name not in self._reid_extractor_cache:
-                logger.info("Initializing Re-ID model: %s", model_name)
-                self._reid_extractor_cache[model_name] = ReIDExtractor(
-                    model_name=model_name,
-                    device=self._reid_cfg.get("device", "cpu"),
+            self._reid_cfg["model"] = model_name
+            self._reid_model_name = model_name
+            if not self._reid_enabled:
+                return
+
+            try:
+                if model_name not in self._reid_extractor_cache:
+                    logger.info("Initializing Re-ID model: %s", model_name)
+                    self._reid_extractor_cache[model_name] = ReIDExtractor(
+                        model_name=model_name,
+                        device=self._reid_cfg.get("device", "cpu"),
+                    )
+                self._reid_extractor = self._reid_extractor_cache[model_name]
+                logger.info("✓ Re-ID model set to: %s", model_name)
+                self._gallery = ReIDGallery(
+                    thresh=self._reid_cfg.get("reid_thresh", 0.4),
+                    ema_rate=self._reid_cfg.get("feature_update_rate", 0.9),
+                    max_dist=self._reid_cfg.get("max_reid_distance", 0.6),
                 )
-            self._reid_extractor = self._reid_extractor_cache[model_name]
-            logger.info("✓ Re-ID model set to: %s", model_name)
-            self._gallery = ReIDGallery(
-                thresh=self._reid_cfg.get("reid_thresh", 0.4),
-                ema_rate=self._reid_cfg.get("feature_update_rate", 0.9),
-                max_dist=self._reid_cfg.get("max_reid_distance", 0.6),
-            )
-            self._reid_frame_interval = max(1, int(self._reid_cfg.get("frame_interval", 3)))
-        except Exception as e:
-            logger.error("Failed to load Re-ID model '%s': %s. Using fallback.", model_name, str(e))
-            # Use a fallback extractor
-            if "fallback" not in self._reid_extractor_cache:
-                self._reid_extractor_cache["fallback"] = ReIDExtractor(
-                    model_name="osnet_x0_25",
-                    device=self._reid_cfg.get("device", "cpu"),
-                )
-            self._reid_extractor = self._reid_extractor_cache["fallback"]
+                self._reid_frame_interval = max(1, int(self._reid_cfg.get("frame_interval", 3)))
+            except Exception as e:
+                logger.error("Failed to load Re-ID model '%s': %s. Using fallback.", model_name, str(e))
+                # Use a fallback extractor
+                if "fallback" not in self._reid_extractor_cache:
+                    self._reid_extractor_cache["fallback"] = ReIDExtractor(
+                        model_name="osnet_x0_25",
+                        device=self._reid_cfg.get("device", "cpu"),
+                    )
+                self._reid_extractor = self._reid_extractor_cache["fallback"]
 
     def set_tracker(self, tracker_name: str):
         """
         Switch tracking backend dynamically.
         Supported: bytetrack, botsort (native) + ocsort, strongsort, trackformer (custom)
         """
-        available = get_available_trackers()
-        
-        if tracker_name not in available:
-            logger.warning(
-                "Tracker '%s' not available (available: %s). Falling back to bytetrack.",
-                tracker_name, available
-            )
-            tracker_name = "bytetrack"
-        
-        self._tracker_name = tracker_name
-        self.cfg["tracking"]["tracker"] = tracker_name
-        self._initialize_tracker()
-        logger.info("✓ Tracker switched to: %s", tracker_name)
+        with self._engine_lock:
+            available = get_available_trackers()
+
+            if tracker_name not in available:
+                logger.warning(
+                    "Tracker '%s' not available (available: %s). Falling back to bytetrack.",
+                    tracker_name, available
+                )
+                tracker_name = "bytetrack"
+
+            self._tracker_name = tracker_name
+            self.cfg["tracking"]["tracker"] = tracker_name
+            self._initialize_tracker()
+            logger.info("✓ Tracker switched to: %s", tracker_name)
     
     def _initialize_tracker(self):
         """Initialize the appropriate tracker based on tracker_name."""
@@ -448,37 +454,43 @@ class DetectionEngine:
                           <name>.xml + <name>.bin + metadata.yaml
                           (NOT the bare .xml path)
         """
-        paths = self.cfg.get("models", {})
-        model_path = paths.get(model_key, "").strip()
-        if not model_path:
-            raise ValueError(f"Model key '{model_key}' not found in config.")
+        with self._engine_lock:
+            paths = self.cfg.get("models", {})
+            model_path = paths.get(model_key, "").strip()
+            if not model_path:
+                raise ValueError(f"Model key '{model_key}' not found in config.")
 
-        p = Path(model_path)
+            p = Path(model_path)
 
-        # If config still points to a bare .xml, auto-redirect to its parent folder
-        if p.suffix.lower() == ".xml":
-            logger.warning(
-                "Path points to a .xml file ('%s'). "
-                "Ultralytics needs the *folder* for OpenVINO models. "
-                "Redirecting to parent folder: '%s'", p, p.parent
-            )
-            p = p.parent
+            # If config still points to a bare .xml, auto-redirect to its parent folder
+            if p.suffix.lower() == ".xml":
+                logger.warning(
+                    "Path points to a .xml file ('%s'). "
+                    "Ultralytics needs the *folder* for OpenVINO models. "
+                    "Redirecting to parent folder: '%s'", p, p.parent
+                )
+                p = p.parent
 
-        if not p.exists():
-            raise FileNotFoundError(
-                f"Model path not found: {p}\n"
-                "For OpenVINO models the path must be a folder containing:\n"
-                "  <name>.xml  +  <name>.bin  +  metadata.yaml\n"
-                "Example: models/openvino/yolo11s_int8_openvino_model/"
-            )
+            if not p.exists():
+                raise FileNotFoundError(
+                    f"Model path not found: {p}\n"
+                    "For OpenVINO models the path must be a folder containing:\n"
+                    "  <name>.xml  +  <name>.bin  +  metadata.yaml\n"
+                    "Example: models/openvino/yolo11s_int8_openvino_model/"
+                )
 
-        from ultralytics import YOLO  # lazy import
+            from ultralytics import YOLO  # lazy import
 
-        logger.info("Loading model: %s  (%s)", model_key, str(p))
-        self._model = YOLO(str(p), task="detect")
-        self._model_path = str(p)
-        self._model_key = model_key
-        logger.info("Model ready.")
+            logger.info("Loading model: %s  (%s)", model_key, str(p))
+            self._model = YOLO(str(p), task="detect")
+            self._model_path = str(p)
+            self._model_key = model_key
+
+            # Re-create tracker instance to clear any stale tracker state.
+            self._initialize_tracker()
+            self.reset_trails()
+
+            logger.info("Model ready.")
 
     # ── Per-frame inference ───────────────────────────────────────────────────
 
@@ -487,233 +499,234 @@ class DetectionEngine:
         Run detection + tracking + Re-ID on one BGR frame.
         Returns (annotated_frame, stats_dict).
         """
-        if self._model is None:
-            return frame, {}
-
-        self._frame_idx += 1
-
-        ov_cfg = self.cfg.get("openvino", {})
-        device_arg = ov_cfg.get("device", "CPU") if self._is_openvino() else None
-
-        # ── Inference ─────────────────────────────────────────────────────────
-        # For custom trackers, run detection only
-        if self._custom_tracker is not None:
-            kwargs = dict(
-                conf=self.conf,
-                iou=self.iou,
-                classes=self.classes,
-                imgsz=self.imgsz,
-                max_det=self.max_det,
-                verbose=False,
-            )
-            if device_arg:
-                kwargs["device"] = device_arg
-            
-            try:
-                results = self._model.predict(frame, **kwargs)
-            except Exception as e:
-                logger.error("Detection failed: %s", str(e))
+        with self._engine_lock:
+            if self._model is None:
                 return frame, {}
-            
-            # Apply custom tracking
+
+            self._frame_idx += 1
+
+            ov_cfg = self.cfg.get("openvino", {})
+            device_arg = ov_cfg.get("device", "CPU") if self._is_openvino() else None
+
+            # ── Inference ─────────────────────────────────────────────────────
+            # For custom trackers, run detection only
+            if self._custom_tracker is not None:
+                kwargs = dict(
+                    conf=self.conf,
+                    iou=self.iou,
+                    classes=self.classes,
+                    imgsz=self.imgsz,
+                    max_det=self.max_det,
+                    verbose=False,
+                )
+                if device_arg:
+                    kwargs["device"] = device_arg
+
+                try:
+                    results = self._model.predict(frame, **kwargs)
+                except Exception as e:
+                    logger.error("Detection failed: %s", str(e))
+                    return frame, {}
+
+                # Apply custom tracking
+                if results and results[0].boxes is not None:
+                    boxes = results[0].boxes
+                    detections = []
+                    for i in range(len(boxes)):
+                        xyxy = boxes.xyxy[i].cpu().numpy().astype(np.float32)
+                        conf = float(boxes.conf[i].cpu())
+                        cls_id = int(boxes.cls[i].cpu())
+                        detections.append([*xyxy, conf, cls_id])
+
+                    detections = np.array(detections) if detections else np.empty((0, 6))
+                    tracked = self._custom_tracker.update(detections)
+
+                    # Convert tracked results to Results format
+                    class NumpyWrapper:
+                        """Wrapper to make numpy arrays compatible with torch tensor operations."""
+                        def __init__(self, arr):
+                            if isinstance(arr, np.ndarray):
+                                self.arr = arr.item() if arr.size == 1 else arr
+                            else:
+                                self.arr = arr
+
+                        def cpu(self):
+                            """Return self (already on CPU as numpy)."""
+                            return self
+
+                        def numpy(self):
+                            """Return numpy array."""
+                            if isinstance(self.arr, np.ndarray):
+                                return self.arr
+                            return np.array([self.arr])
+
+                        def __float__(self):
+                            """Support float conversion."""
+                            if isinstance(self.arr, np.ndarray):
+                                return float(self.arr.item())
+                            return float(self.arr)
+
+                        def __int__(self):
+                            """Support int conversion."""
+                            if isinstance(self.arr, np.ndarray):
+                                return int(self.arr.item())
+                            return int(self.arr)
+
+                        def numel(self):
+                            """Return number of elements (PyTorch compatibility)."""
+                            if isinstance(self.arr, np.ndarray):
+                                return self.arr.size
+                            return 1
+
+                    class TensorLikeList(list):
+                        """List subclass that acts like a PyTorch tensor for .numel()."""
+                        def numel(self):
+                            """Return number of elements."""
+                            return len(self)
+
+                    class TrackedBoxesWrapper:
+                        """Wrapper for tracked boxes from custom trackers."""
+                        def __init__(self, tracked_arr):
+                            self.xyxy = [NumpyWrapper(tracked_arr[i, :4]) for i in range(len(tracked_arr))] if len(tracked_arr) > 0 else []
+                            self.conf = [NumpyWrapper(tracked_arr[i, 4]) for i in range(len(tracked_arr))] if len(tracked_arr) > 0 else []
+                            self.cls = [NumpyWrapper(tracked_arr[i, 5]) for i in range(len(tracked_arr))] if len(tracked_arr) > 0 else []
+                            # Use special list that has .numel() method
+                            id_list = TensorLikeList([NumpyWrapper(tracked_arr[i, 6]) for i in range(len(tracked_arr))])
+                            self.id = id_list if len(id_list) > 0 else None
+                            self._len = len(tracked_arr)
+
+                        def __len__(self):
+                            return self._len
+
+                    tracked_boxes = TrackedBoxesWrapper(tracked)
+
+                    result = type('obj', (object,), {
+                        'boxes': tracked_boxes,
+                        'names': results[0].names
+                    })()
+                    results = [result]
+            else:
+                # Use native Ultralytics tracker (ByteTrack or BoTSort)
+                kwargs = dict(
+                    conf=self.conf,
+                    iou=self.iou,
+                    classes=self.classes,
+                    imgsz=self.imgsz,
+                    max_det=self.max_det,
+                    tracker=f"{self._tracker_name}.yaml",
+                    persist=True,
+                    verbose=False,
+                )
+                if device_arg:
+                    kwargs["device"] = device_arg
+
+                try:
+                    results = self._model.track(frame, **kwargs)
+                except AssertionError as e:
+                    logger.error("Tracker not supported: %s", str(e))
+                    # Fall back to bytetrack
+                    logger.info("Falling back to bytetrack")
+                    self._tracker_name = "bytetrack"
+                    self._custom_tracker = None
+                    kwargs["tracker"] = "bytetrack.yaml"
+                    results = self._model.track(frame, **kwargs)
+                except Exception as e:
+                    logger.error("Tracking failed: %s", str(e))
+                    return frame, {}
+
+            # ── Build annotated frame ─────────────────────────────────────────
+            annotated = frame.copy()
+            stats = {"detections": 0, "tracks": 0}
+
             if results and results[0].boxes is not None:
                 boxes = results[0].boxes
-                detections = []
-                for i in range(len(boxes)):
-                    xyxy = boxes.xyxy[i].cpu().numpy().astype(np.float32)
-                    conf = float(boxes.conf[i].cpu())
+                n = len(boxes)
+                stats["detections"] = n
+
+                for i in range(n):
+                    xyxy = boxes.xyxy[i].cpu().numpy().astype(int)
+                    conf_val = float(boxes.conf[i].cpu())
                     cls_id = int(boxes.cls[i].cpu())
-                    detections.append([*xyxy, conf, cls_id])
-                
-                detections = np.array(detections) if detections else np.empty((0, 6))
-                tracked = self._custom_tracker.update(detections)
-                
-                # Convert tracked results to Results format
-                class NumpyWrapper:
-                    """Wrapper to make numpy arrays compatible with torch tensor operations."""
-                    def __init__(self, arr):
-                        if isinstance(arr, np.ndarray):
-                            self.arr = arr.item() if arr.size == 1 else arr
-                        else:
-                            self.arr = arr
-                    
-                    def cpu(self):
-                        """Return self (already on CPU as numpy)."""
-                        return self
-                    
-                    def numpy(self):
-                        """Return numpy array."""
-                        if isinstance(self.arr, np.ndarray):
-                            return self.arr
-                        return np.array([self.arr])
-                    
-                    def __float__(self):
-                        """Support float conversion."""
-                        if isinstance(self.arr, np.ndarray):
-                            return float(self.arr.item())
-                        return float(self.arr)
-                    
-                    def __int__(self):
-                        """Support int conversion."""
-                        if isinstance(self.arr, np.ndarray):
-                            return int(self.arr.item())
-                        return int(self.arr)
-                    
-                    def numel(self):
-                        """Return number of elements (PyTorch compatibility)."""
-                        if isinstance(self.arr, np.ndarray):
-                            return self.arr.size
-                        return 1
-                
-                class TensorLikeList(list):
-                    """List subclass that acts like a PyTorch tensor for .numel()."""
-                    def numel(self):
-                        """Return number of elements."""
-                        return len(self)
-                
-                class TrackedBoxesWrapper:
-                    """Wrapper for tracked boxes from custom trackers."""
-                    def __init__(self, tracked_arr):
-                        self.xyxy = [NumpyWrapper(tracked_arr[i, :4]) for i in range(len(tracked_arr))] if len(tracked_arr) > 0 else []
-                        self.conf = [NumpyWrapper(tracked_arr[i, 4]) for i in range(len(tracked_arr))] if len(tracked_arr) > 0 else []
-                        self.cls = [NumpyWrapper(tracked_arr[i, 5]) for i in range(len(tracked_arr))] if len(tracked_arr) > 0 else []
-                        # Use special list that has .numel() method
-                        id_list = TensorLikeList([NumpyWrapper(tracked_arr[i, 6]) for i in range(len(tracked_arr))])
-                        self.id = id_list if len(id_list) > 0 else None
-                        self._len = len(tracked_arr)
-                    
-                    def __len__(self):
-                        return self._len
-                
-                tracked_boxes = TrackedBoxesWrapper(tracked)
-                
-                result = type('obj', (object,), {
-                    'boxes': tracked_boxes,
-                    'names': results[0].names
-                })()
-                results = [result]
-        else:
-            # Use native Ultralytics tracker (ByteTrack or BoTSort)
-            kwargs = dict(
-                conf=self.conf,
-                iou=self.iou,
-                classes=self.classes,
-                imgsz=self.imgsz,
-                max_det=self.max_det,
-                tracker=f"{self._tracker_name}.yaml",
-                persist=True,
-                verbose=False,
-            )
-            if device_arg:
-                kwargs["device"] = device_arg
-
-            try:
-                results = self._model.track(frame, **kwargs)
-            except AssertionError as e:
-                logger.error("Tracker not supported: %s", str(e))
-                # Fall back to bytetrack
-                logger.info("Falling back to bytetrack")
-                self._tracker_name = "bytetrack"
-                self._custom_tracker = None
-                kwargs["tracker"] = "bytetrack.yaml"
-                results = self._model.track(frame, **kwargs)
-            except Exception as e:
-                logger.error("Tracking failed: %s", str(e))
-                return frame, {}
-
-        # ── Build annotated frame ─────────────────────────────────────────────
-        annotated = frame.copy()
-        stats = {"detections": 0, "tracks": 0}
-
-        if results and results[0].boxes is not None:
-            boxes = results[0].boxes
-            n = len(boxes)
-            stats["detections"] = n
-
-            for i in range(n):
-                xyxy = boxes.xyxy[i].cpu().numpy().astype(int)
-                conf_val = float(boxes.conf[i].cpu())
-                cls_id = int(boxes.cls[i].cpu())
-                cls_name = results[0].names.get(cls_id, str(cls_id))
-                tid = int(boxes.id[i].cpu()) if boxes.id is not None else -1
-
-                x1, y1, x2, y2 = xyxy
-                colour = _colour(tid)
-
-                # Re-ID
-                reid_id = None
-                if self._reid_enabled and tid >= 0:
-                    crop = frame[max(0, y1):y2, max(0, x1):x2]
-                    if self._gallery.has_tracker(tid):
-                        reid_id = self._gallery.get_tracker_reid(tid)
-                    if crop.size > 0 and (
-                        not self._gallery.has_tracker(tid)
-                        or self._frame_idx % self._reid_frame_interval == 0
-                    ):
-                        feat = self._reid_extractor.extract(crop)
-                        reid_id = self._gallery.update(tid, feat)
-                        logger.debug("ReID assign: T%d -> R%d (cls=%s conf=%.2f)",
-                                     tid, reid_id, cls_name, conf_val)
-
-                # Trail
-                if self.show_trail and tid >= 0:
-                    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                    self._trails[tid].append((cx, cy))
-                    pts = list(self._trails[tid])
-                    for j in range(1, len(pts)):
-                        alpha = j / len(pts)
-                        t_col = tuple(int(c * alpha) for c in colour)
-                        cv2.line(annotated, pts[j - 1], pts[j], t_col,
-                                 max(1, self.box_thick - 1))
-
-                # Bounding box
-                cv2.rectangle(annotated, (x1, y1), (x2, y2), colour,
-                               self.box_thick)
-
-                # Label
-                label_parts = []
-                if self.show_labels:
                     cls_name = results[0].names.get(cls_id, str(cls_id))
-                    label_parts.append(cls_name)
-                if self.show_conf:
-                    label_parts.append(f"{conf_val:.2f}")
-                if self.show_tid and tid >= 0:
-                    label_parts.append(f"T{tid}")
-                if self.show_rid and reid_id is not None:
-                    label_parts.append(f"R{reid_id}")
+                    tid = int(boxes.id[i].cpu()) if boxes.id is not None else -1
 
-                if label_parts:
-                    label = " ".join(label_parts)
-                    (tw, th), _ = cv2.getTextSize(
-                        label, cv2.FONT_HERSHEY_SIMPLEX,
-                        self.font_scale, 1
-                    )
-                    cv2.rectangle(annotated,
-                                  (x1, y1 - th - 6), (x1 + tw + 4, y1),
-                                  colour, -1)
-                    cv2.putText(annotated, label, (x1 + 2, y1 - 4),
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                self.font_scale, (255, 255, 255), 1,
-                                cv2.LINE_AA)
+                    x1, y1, x2, y2 = xyxy
+                    colour = _colour(tid)
 
-            if boxes.id is not None:
-                stats["tracks"] = int(boxes.id.numel())
+                    # Re-ID
+                    reid_id = None
+                    if self._reid_enabled and tid >= 0 and self._gallery is not None and self._reid_extractor is not None:
+                        crop = frame[max(0, y1):y2, max(0, x1):x2]
+                        if self._gallery.has_tracker(tid):
+                            reid_id = self._gallery.get_tracker_reid(tid)
+                        if crop.size > 0 and (
+                            not self._gallery.has_tracker(tid)
+                            or self._frame_idx % self._reid_frame_interval == 0
+                        ):
+                            feat = self._reid_extractor.extract(crop)
+                            reid_id = self._gallery.update(tid, feat)
+                            logger.debug("ReID assign: T%d -> R%d (cls=%s conf=%.2f)",
+                                         tid, reid_id, cls_name, conf_val)
 
-        # ── FPS overlay ───────────────────────────────────────────────────────
-        now = time.perf_counter()
-        dt = now - self._t_prev
-        self._t_prev = now
-        if dt > 0:
-            self._fps_buffer.append(1.0 / dt)
-        fps = sum(self._fps_buffer) / max(len(self._fps_buffer), 1)
-        stats["fps"] = round(fps, 1)
+                    # Trail
+                    if self.show_trail and tid >= 0:
+                        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                        self._trails[tid].append((cx, cy))
+                        pts = list(self._trails[tid])
+                        for j in range(1, len(pts)):
+                            alpha = j / len(pts)
+                            t_col = tuple(int(c * alpha) for c in colour)
+                            cv2.line(annotated, pts[j - 1], pts[j], t_col,
+                                     max(1, self.box_thick - 1))
 
-        if self.show_fps:
-            cv2.putText(annotated, f"FPS {fps:.1f}",
-                        (10, 28), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.8, (0, 255, 100), 2, cv2.LINE_AA)
+                    # Bounding box
+                    cv2.rectangle(annotated, (x1, y1), (x2, y2), colour,
+                                  self.box_thick)
 
-        return annotated, stats
+                    # Label
+                    label_parts = []
+                    if self.show_labels:
+                        cls_name = results[0].names.get(cls_id, str(cls_id))
+                        label_parts.append(cls_name)
+                    if self.show_conf:
+                        label_parts.append(f"{conf_val:.2f}")
+                    if self.show_tid and tid >= 0:
+                        label_parts.append(f"T{tid}")
+                    if self.show_rid and reid_id is not None:
+                        label_parts.append(f"R{reid_id}")
+
+                    if label_parts:
+                        label = " ".join(label_parts)
+                        (tw, th), _ = cv2.getTextSize(
+                            label, cv2.FONT_HERSHEY_SIMPLEX,
+                            self.font_scale, 1
+                        )
+                        cv2.rectangle(annotated,
+                                      (x1, y1 - th - 6), (x1 + tw + 4, y1),
+                                      colour, -1)
+                        cv2.putText(annotated, label, (x1 + 2, y1 - 4),
+                                    cv2.FONT_HERSHEY_SIMPLEX,
+                                    self.font_scale, (255, 255, 255), 1,
+                                    cv2.LINE_AA)
+
+                if boxes.id is not None:
+                    stats["tracks"] = int(boxes.id.numel())
+
+            # ── FPS overlay ───────────────────────────────────────────────────
+            now = time.perf_counter()
+            dt = now - self._t_prev
+            self._t_prev = now
+            if dt > 0:
+                self._fps_buffer.append(1.0 / dt)
+            fps = sum(self._fps_buffer) / max(len(self._fps_buffer), 1)
+            stats["fps"] = round(fps, 1)
+
+            if self.show_fps:
+                cv2.putText(annotated, f"FPS {fps:.1f}",
+                            (10, 28), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.8, (0, 255, 100), 2, cv2.LINE_AA)
+
+            return annotated, stats
 
     # ── Utility ───────────────────────────────────────────────────────────────
 
@@ -723,7 +736,8 @@ class DetectionEngine:
         return p.is_dir() or p.suffix.lower() == ".xml"
 
     def reset_trails(self):
-        self._trails.clear()
+        with self._engine_lock:
+            self._trails.clear()
 
     @staticmethod
     def load_config(path: str = "config.yaml") -> dict:

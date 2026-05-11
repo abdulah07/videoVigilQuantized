@@ -120,7 +120,7 @@ class VideoWorker(threading.Thread):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("YOLO Vision — Detection & Tracking")
+        self.title("VIDEO VIGIL — Detection & Tracking")
         self.configure(bg=BG)
         self.tk.call("tk", "scaling", UI_SCALE)
         self.minsize(1540, 980)
@@ -181,7 +181,7 @@ class App(tk.Tk):
         sidebar.columnconfigure(0, weight=1)
 
         # Logo / title
-        tk.Label(sidebar, text="YOLO\nVISION", bg=PANEL, fg=ACCENT,
+        tk.Label(sidebar, text="VIDEO\nVIGIL", bg=PANEL, fg=ACCENT,
                  font=(UI_FONT, TITLE_SIZE, "bold"), justify="left",
                  padx=20, pady=26).grid(row=0, column=0, sticky="w")
 
@@ -466,6 +466,27 @@ class App(tk.Tk):
     # ── Actions ───────────────────────────────────────────────────────────────
 
     def _load_model(self):
+        if self._running:
+            self._stop()
+
+            # Ensure the worker has actually stopped before proceeding to load a model.
+            # If the worker is still alive (e.g. blocked in OpenVINO inference), wait
+            # for up to 10 seconds; otherwise abort the model load to avoid resource
+            # reinitialisation races that can cause native crashes.
+            wait_time = 0.0
+            while self._worker is not None and getattr(self._worker, "is_alive", lambda: False)() and wait_time < 10.0:
+                self.update_idletasks()
+                time.sleep(0.2)
+                wait_time += 0.2
+
+            if self._worker is not None and getattr(self._worker, "is_alive", lambda: False)():
+                messagebox.showwarning(
+                    "Stop in progress",
+                    "Video worker is still stopping (busy). Please try loading the model again in a few seconds."
+                )
+                self._set_status("Stop in progress; model load aborted.")
+                return
+
         key = self._model_var.get()
         if not key:
             messagebox.showwarning("No model", "Please select a model first.")
@@ -563,9 +584,13 @@ class App(tk.Tk):
 
     def _stop(self):
         self._running = False
-        if self._worker:
-            self._worker.stop()
-            self._worker = None
+        worker = self._worker
+        if worker:
+            worker.stop()
+            worker.join(timeout=2.0)
+            if worker.is_alive():
+                logger.warning("Video worker did not stop within timeout; continuing shutdown")
+        self._worker = None
         if self._after_id:
             self.after_cancel(self._after_id)
             self._after_id = None
