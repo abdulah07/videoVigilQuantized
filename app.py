@@ -37,14 +37,14 @@ logger = logging.getLogger("app")
 CONFIG_PATH = "config.yaml"
 
 UI_FONT = "DejaVu Sans"
-UI_SCALE = 1.4
-TITLE_SIZE = 32
-SUBTITLE_SIZE = 13
-CARD_SIZE = 11
-TEXT_SIZE = 13
-SMALL_TEXT_SIZE = 11
-BUTTON_SIZE = 14
-PLACEHOLDER_SIZE = 20
+UI_SCALE = 0.85
+TITLE_SIZE = 18
+SUBTITLE_SIZE = 9
+CARD_SIZE = 8
+TEXT_SIZE = 9
+SMALL_TEXT_SIZE = 8
+BUTTON_SIZE = 9
+PLACEHOLDER_SIZE = 12
 
 # ── Colour palette (dark theme) ───────────────────────────────────────────────
 BG       = "#0d0f14"
@@ -123,8 +123,10 @@ class App(tk.Tk):
         self.title("VIDEO VIGIL — Detection & Tracking")
         self.configure(bg=BG)
         self.tk.call("tk", "scaling", UI_SCALE)
-        self.minsize(1540, 980)
+        self.minsize(1200, 800)
         self.resizable(True, True)
+        # Maximize on next update
+        self.after_idle(self._maximize_window)
 
         # Detect system specs and get recommendations
         self.system_spec, self.recommendations = recommend_models(prioritize="balanced")
@@ -170,12 +172,18 @@ class App(tk.Tk):
 
     # ── UI Construction ────────────────────────────────────────────────────────
 
+    def _maximize_window(self):
+        """Maximize window to fill screen."""
+        w = self.winfo_screenwidth()
+        h = self.winfo_screenheight()
+        self.geometry(f"{w}x{h}+0+0")
+
     def _build_ui(self):
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
 
         # ── Left sidebar ───────────────────────────────────────────────────────
-        sidebar = tk.Frame(self, bg=PANEL, width=390)
+        sidebar = tk.Frame(self, bg=PANEL, width=350)
         sidebar.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
         sidebar.grid_propagate(False)
         sidebar.columnconfigure(0, weight=1)
@@ -183,7 +191,7 @@ class App(tk.Tk):
         # Logo / title
         tk.Label(sidebar, text="VIDEO\nVIGIL", bg=PANEL, fg=ACCENT,
                  font=(UI_FONT, TITLE_SIZE, "bold"), justify="left",
-                 padx=20, pady=26).grid(row=0, column=0, sticky="w")
+                 padx=10, pady=10).grid(row=0, column=0, sticky="w")
 
         tk.Label(sidebar, text="Detection & Tracking Studio",
                  bg=PANEL, fg=FG_DIM, font=(UI_FONT, SUBTITLE_SIZE),
@@ -379,7 +387,7 @@ class App(tk.Tk):
         self.canvas = tk.Canvas(canvas_frame, bg="#0a0c10", bd=0,
                                 highlightthickness=0, relief="flat")
         self.canvas.grid(row=0, column=0, sticky="nsew",
-                         padx=12, pady=12)
+                         padx=4, pady=4)
 
         # Status bar
         self._status_var = tk.StringVar(value="Ready – load a model and press START")
@@ -404,7 +412,7 @@ class App(tk.Tk):
 
     def _sep(self, parent, row):
         tk.Frame(parent, bg=BORDER, height=1).grid(
-            row=row, column=0, sticky="ew", padx=12, pady=8)
+            row=row, column=0, sticky="ew", padx=8, pady=3)
 
     def _card_label(self, parent, row, text):
         tk.Label(parent, text=text, bg=PANEL, fg=FG_DIM,
@@ -417,9 +425,9 @@ class App(tk.Tk):
             parent, text=text, command=cmd,
             bg=colour, fg=BG, activebackground=FG, activeforeground=BG,
             font=(UI_FONT, BUTTON_SIZE, "bold"), bd=0, relief="flat",
-            padx=10, pady=8, cursor="hand2",
+            padx=6, pady=4, cursor="hand2",
         )
-        b.grid(row=row, column=0, padx=16, pady=(0, 8), sticky="ew")
+        b.grid(row=row, column=0, padx=10, pady=(0, 4), sticky="ew")
         return b
 
     def _btn_grid(self, parent, text, cmd, colour, r, c, state="normal"):
